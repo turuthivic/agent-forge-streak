@@ -1,0 +1,390 @@
+/* === Reset & Base === */
+*, *::before, *::after {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  max-width: 480px;
+  margin: 0 auto;
+  padding: 20px;
+  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  min-height: 100vh;
+  color: white;
+}
+
+/* === Typography === */
+h1 {
+  font-size: 1.8em;
+  text-align: center;
+  margin-bottom: 6px;
+}
+
+h2 {
+  font-size: 1.2em;
+  margin-bottom: 12px;
+  opacity: 0.9;
+}
+
+/* === Header === */
+.header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 16px;
+}
+
+.header h1 {
+  flex: 1;
+}
+
+.header-actions {
+  display: flex;
+  gap: 8px;
+}
+
+/* === Connection Status Dot === */
+.status-dot {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: #ef4444;
+  transition: background 0.3s;
+  cursor: pointer;
+}
+
+.status-dot.connected { background: #10b981; }
+.status-dot.connecting { background: #fbbf24; animation: blink 1s infinite; }
+.status-dot.reconnecting { background: #f97316; animation: blink 1s infinite; }
+
+@keyframes blink {
+  50% { opacity: 0.4; }
+}
+
+/* === Stats Bar === */
+.stats-bar {
+  display: flex;
+  justify-content: space-around;
+  gap: 8px;
+  margin-bottom: 20px;
+}
+
+.stat {
+  background: rgba(255, 255, 255, 0.12);
+  padding: 10px 14px;
+  border-radius: 16px;
+  backdrop-filter: blur(10px);
+  text-align: center;
+  flex: 1;
+  min-width: 0;
+}
+
+.stat-value {
+  font-size: 1.4em;
+  font-weight: bold;
+  display: block;
+}
+
+.stat-label {
+  font-size: 0.75em;
+  opacity: 0.8;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+/* === Flame Animation === */
+.flame {
+  display: inline-block;
+  animation: flicker 1s infinite alternate;
+}
+
+@keyframes flicker {
+  0% { transform: scale(1); }
+  100% { transform: scale(1.08); }
+}
+
+/* === Task List === */
+.task-list {
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-bottom: 20px;
+}
+
+.task-item {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  background: rgba(255, 255, 255, 0.1);
+  padding: 14px 16px;
+  border-radius: 14px;
+  backdrop-filter: blur(10px);
+  cursor: pointer;
+  transition: background 0.2s, transform 0.15s;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+.task-item:active {
+  transform: scale(0.98);
+}
+
+.task-item.completed {
+  background: rgba(16, 185, 129, 0.25);
+}
+
+.task-checkbox {
+  width: 24px;
+  height: 24px;
+  border-radius: 6px;
+  border: 2px solid rgba(255, 255, 255, 0.5);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  transition: all 0.2s;
+  font-size: 14px;
+}
+
+.task-item.completed .task-checkbox {
+  background: #10b981;
+  border-color: #10b981;
+}
+
+.task-text {
+  flex: 1;
+  line-height: 1.4;
+  font-size: 0.95em;
+}
+
+.task-item.completed .task-text {
+  text-decoration: line-through;
+  opacity: 0.7;
+}
+
+.task-item.pending-send .task-checkbox {
+  background: #fbbf24;
+  border-color: #fbbf24;
+}
+
+/* === Buttons === */
+button, .btn {
+  background: #10b981;
+  color: white;
+  border: none;
+  padding: 12px 24px;
+  font-size: 1em;
+  border-radius: 50px;
+  cursor: pointer;
+  box-shadow: 0 8px 16px rgba(0, 0, 0, 0.2);
+  transition: all 0.2s;
+  font-weight: 600;
+}
+
+button:hover, .btn:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 12px 24px rgba(0, 0, 0, 0.3);
+}
+
+button:active, .btn:active {
+  transform: translateY(0);
+}
+
+button:disabled, .btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+  transform: none;
+}
+
+.btn-secondary {
+  background: rgba(255, 255, 255, 0.15);
+  box-shadow: none;
+}
+
+.btn-small {
+  padding: 8px 16px;
+  font-size: 0.85em;
+}
+
+/* === Settings Form === */
+.settings-form {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.form-group {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.form-group label {
+  font-size: 0.85em;
+  opacity: 0.9;
+  font-weight: 600;
+}
+
+.form-group input {
+  background: rgba(255, 255, 255, 0.12);
+  border: 1px solid rgba(255, 255, 255, 0.25);
+  color: white;
+  padding: 12px 14px;
+  border-radius: 12px;
+  font-size: 0.95em;
+  outline: none;
+  transition: border-color 0.2s;
+}
+
+.form-group input::placeholder {
+  color: rgba(255, 255, 255, 0.4);
+}
+
+.form-group input:focus {
+  border-color: #10b981;
+}
+
+.settings-actions {
+  display: flex;
+  gap: 10px;
+  margin-top: 8px;
+}
+
+.settings-actions button {
+  flex: 1;
+}
+
+/* === Toast === */
+.toast-container {
+  position: fixed;
+  bottom: 24px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 1000;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-width: 380px;
+  width: calc(100% - 40px);
+}
+
+.toast {
+  background: rgba(0, 0, 0, 0.85);
+  color: white;
+  padding: 12px 18px;
+  border-radius: 12px;
+  font-size: 0.9em;
+  animation: slideUp 0.3s ease-out, fadeOut 0.3s ease-in 2.7s forwards;
+  backdrop-filter: blur(10px);
+}
+
+.toast.error {
+  background: rgba(239, 68, 68, 0.9);
+}
+
+.toast.success {
+  background: rgba(16, 185, 129, 0.9);
+}
+
+@keyframes slideUp {
+  from { transform: translateY(20px); opacity: 0; }
+  to { transform: translateY(0); opacity: 1; }
+}
+
+@keyframes fadeOut {
+  to { opacity: 0; }
+}
+
+/* === View Container === */
+.view {
+  animation: fadeIn 0.2s ease-out;
+}
+
+@keyframes fadeIn {
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+/* === Loading === */
+.loading {
+  text-align: center;
+  padding: 40px 0;
+  opacity: 0.7;
+}
+
+.loading-spinner {
+  display: inline-block;
+  width: 28px;
+  height: 28px;
+  border: 3px solid rgba(255, 255, 255, 0.3);
+  border-top-color: white;
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+/* === Empty State === */
+.empty-state {
+  text-align: center;
+  padding: 40px 20px;
+  opacity: 0.8;
+}
+
+.empty-state p {
+  margin-bottom: 16px;
+}
+
+/* === Day Label === */
+.day-label {
+  text-align: center;
+  font-size: 0.85em;
+  opacity: 0.7;
+  margin-bottom: 12px;
+}
+
+/* === Pulse animation for check === */
+@keyframes checkPulse {
+  0% { transform: scale(1); }
+  50% { transform: scale(1.15); }
+  100% { transform: scale(1); }
+}
+
+.task-item.just-completed {
+  animation: checkPulse 0.4s ease-out;
+}
+
+/* === Raw message fallback === */
+.raw-message {
+  background: rgba(255, 255, 255, 0.08);
+  padding: 16px;
+  border-radius: 14px;
+  white-space: pre-wrap;
+  font-family: monospace;
+  font-size: 0.85em;
+  line-height: 1.5;
+  overflow-x: auto;
+}
+
+/* === Gear icon button === */
+.icon-btn {
+  background: none;
+  border: none;
+  box-shadow: none;
+  padding: 6px;
+  font-size: 1.3em;
+  cursor: pointer;
+  opacity: 0.8;
+  transition: opacity 0.2s;
+}
+
+.icon-btn:hover {
+  opacity: 1;
+  transform: none;
+  box-shadow: none;
+}
