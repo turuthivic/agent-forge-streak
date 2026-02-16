@@ -130,8 +130,7 @@ export const gateway = {
     cleanup();
     setState('CONNECTING');
 
-    const { gatewayUrl, authToken, agentId } = settings;
-    const { deviceId } = store.get();
+    const { gatewayUrl, authToken } = settings;
 
     try {
       ws = new WebSocket(gatewayUrl);
@@ -141,7 +140,7 @@ export const gateway = {
     }
 
     ws.onopen = () => {
-      const connectFrame = buildConnect(authToken, deviceId);
+      const connectFrame = buildConnect(authToken);
       const connectId = connectFrame.id;
 
       // Set up a one-time handler for the connect response
@@ -233,8 +232,7 @@ export const gateway = {
       }
 
       testWs.onopen = () => {
-        const deviceId = store.get().deviceId;
-        const frame = buildConnect(token, deviceId);
+        const frame = buildConnect(token);
         const connectId = frame.id;
 
         testWs.onmessage = (event) => {

@@ -7,11 +7,15 @@ export function buildRequest(method, params = {}) {
   };
 }
 
-export function buildConnect(authToken, deviceId) {
+export function buildConnect(authToken) {
   return buildRequest('connect', {
     auth: { token: authToken },
-    role: 'operator',
-    deviceId,
+    minProtocol: 1,
+    maxProtocol: 1,
+    client: {
+      name: 'forge-pwa',
+      version: '1.0.0',
+    },
   });
 }
 
