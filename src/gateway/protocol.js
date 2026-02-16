@@ -13,10 +13,10 @@ export function buildConnectRequest(authToken) {
       minProtocol: 1,
       maxProtocol: 3,
       client: {
-        id: 'openclaw-control-ui',
+        id: 'webchat',
         mode: 'webchat',
         version: 'dev',
-        platform: navigator?.platform ?? 'web',
+        platform: navigator.platform || 'web',
       },
     },
   };
