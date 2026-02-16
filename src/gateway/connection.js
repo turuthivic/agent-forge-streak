@@ -1,23 +1,21 @@
 import { store } from '../store.js';
-import {
-  buildConnect,
-  buildChatSend,
-  buildPing,
-  parseFrame,
-  isResponse,
-  getSessionKey,
-} from './protocol.js';
+import { buildAuthUrl, buildConnectRequest, parseFrame, getSessionKey } from './protocol.js';
 
 const HEARTBEAT_INTERVAL = 30_000;
 const RECONNECT_BASE = 1000;
 const RECONNECT_CAP = 30_000;
+const CONNECT_SEND_DELAY = 750;
 
 let ws = null;
 let heartbeatTimer = null;
 let reconnectTimer = null;
+let connectTimer = null;
 let reconnectAttempt = 0;
-let pendingRequests = new Map(); // id -> { resolve, reject, timeout }
-let eventHandlers = new Map(); // event name -> Set<handler>
+let authenticated = false;
+let connectSent = false;
+let currentAuthToken = null;
+let connectId = null;
+let eventHandlers = new Map();
 
 function setState(connectionState, error = null) {
   store.update('connection', { state: connectionState, error });
@@ -33,7 +31,7 @@ function startHeartbeat() {
   stopHeartbeat();
   heartbeatTimer = setInterval(() => {
     if (ws && ws.readyState === WebSocket.OPEN) {
-      send(buildPing());
+      ws.send(JSON.stringify({ type: 'ping' }));
     }
   }, HEARTBEAT_INTERVAL);
 }
@@ -53,57 +51,76 @@ function send(obj) {
   return false;
 }
 
-function request(method, params = {}) {
-  return new Promise((resolve, reject) => {
-    const req = { type: 'req', id: crypto.randomUUID(), method, params };
-    const timeout = setTimeout(() => {
-      pendingRequests.delete(req.id);
-      reject(new Error(`Request ${method} timed out`));
-    }, 15_000);
-
-    pendingRequests.set(req.id, { resolve, reject, timeout });
-
-    if (!send(req)) {
-      clearTimeout(timeout);
-      pendingRequests.delete(req.id);
-      reject(new Error('Not connected'));
-    }
-  });
+function sendConnect() {
+  if (connectSent) return;
+  connectSent = true;
+  if (connectTimer) {
+    clearTimeout(connectTimer);
+    connectTimer = null;
+  }
+  const frame = buildConnectRequest(currentAuthToken);
+  connectId = frame.id;
+  send(frame);
+  console.log('[gateway] sent connect request', frame);
 }
 
-function handleMessage(raw) {
-  const frame = parseFrame(raw);
+function emit(event, data) {
+  const handlers = eventHandlers.get(event) || new Set();
+  const wildcardHandlers = eventHandlers.get('*') || new Set();
+  handlers.forEach((fn) => fn(data));
+  wildcardHandlers.forEach((fn) => fn(data));
+}
 
-  // Handle response frames
-  if (frame.type === 'res' && pendingRequests.has(frame.id)) {
-    const { resolve, timeout } = pendingRequests.get(frame.id);
-    clearTimeout(timeout);
-    pendingRequests.delete(frame.id);
-    resolve(frame);
+function handleMessage(raw, settings) {
+  const frame = parseFrame(raw);
+  console.log('[gateway frame]', frame);
+
+  // Challenge received - send connect immediately (no device auth, skip signing)
+  if (frame.type === 'event' && frame.event === 'connect.challenge') {
+    sendConnect();
     return;
   }
 
-  // Handle event frames
-  if (frame.type === 'event') {
-    const handlers = eventHandlers.get(frame.event) || new Set();
-    const wildcardHandlers = eventHandlers.get('*') || new Set();
-    handlers.forEach((fn) => fn(frame));
-    wildcardHandlers.forEach((fn) => fn(frame));
+  // Hello-ok response to our connect request
+  if (frame.type === 'res' && frame.id === connectId) {
+    if (frame.ok !== false && !frame.error) {
+      authenticated = true;
+      reconnectAttempt = 0;
+      setState('CONNECTED');
+      startHeartbeat();
+      flushQueue(settings);
+      emit('connected', frame);
+      console.log('[gateway] connected (hello-ok)', frame);
+    } else {
+      const err = frame.error?.message || 'Connect rejected';
+      console.error('[gateway] connect failed:', err);
+      setState('DISCONNECTED', err);
+      cleanup();
+    }
     return;
+  }
+
+  // Forward all other frames to listeners
+  emit(frame.type || 'message', frame);
+  if (frame.event) {
+    emit(frame.event, frame);
   }
 }
 
 function cleanup() {
   stopHeartbeat();
+  authenticated = false;
+  connectSent = false;
+  currentAuthToken = null;
+  connectId = null;
   if (reconnectTimer) {
     clearTimeout(reconnectTimer);
     reconnectTimer = null;
   }
-  pendingRequests.forEach(({ reject, timeout }) => {
-    clearTimeout(timeout);
-    reject(new Error('Connection closed'));
-  });
-  pendingRequests.clear();
+  if (connectTimer) {
+    clearTimeout(connectTimer);
+    connectTimer = null;
+  }
   if (ws) {
     ws.onopen = null;
     ws.onclose = null;
@@ -131,56 +148,30 @@ export const gateway = {
     setState('CONNECTING');
 
     const { gatewayUrl, authToken } = settings;
+    currentAuthToken = authToken;
+    const url = buildAuthUrl(gatewayUrl, authToken);
 
     try {
-      ws = new WebSocket(gatewayUrl);
+      ws = new WebSocket(url);
     } catch (err) {
       setState('DISCONNECTED', err.message);
       return;
     }
 
     ws.onopen = () => {
-      const connectFrame = buildConnect(authToken);
-      const connectId = connectFrame.id;
-
-      // Set up a one-time handler for the connect response
-      pendingRequests.set(connectId, {
-        resolve: (frame) => {
-          if (frame.result && !frame.error) {
-            reconnectAttempt = 0;
-            setState('CONNECTED');
-            startHeartbeat();
-            flushQueue(settings);
-            // Emit connect event to listeners
-            const handlers = eventHandlers.get('connected') || new Set();
-            handlers.forEach((fn) => fn());
-          } else {
-            const err = frame.error?.message || 'Handshake rejected';
-            setState('DISCONNECTED', err);
-            cleanup();
-          }
-        },
-        reject: () => setState('DISCONNECTED', 'Handshake timeout'),
-        timeout: setTimeout(() => {
-          pendingRequests.delete(connectId);
-          setState('DISCONNECTED', 'Handshake timeout');
-          cleanup();
-        }, 10_000),
-      });
-
-      send(connectFrame);
+      console.log('[gateway] WebSocket open, waiting for challenge...');
+      // Send connect after delay if no challenge arrives (mirrors Studio behavior)
+      connectTimer = setTimeout(() => sendConnect(), CONNECT_SEND_DELAY);
     };
 
-    ws.onmessage = (event) => handleMessage(event.data);
+    ws.onmessage = (event) => handleMessage(event.data, settings);
 
-    ws.onerror = () => {
-      // onerror is followed by onclose, so just let onclose handle state
-    };
+    ws.onerror = () => {};
 
     ws.onclose = () => {
-      const wasConnected = store.get().connection.state === 'CONNECTED';
+      const prevState = store.get().connection.state;
       cleanup();
-      if (wasConnected || store.get().connection.state === 'CONNECTING') {
+      if (prevState === 'CONNECTED' || prevState === 'CONNECTING') {
         scheduleReconnect(settings);
       } else {
         setState('DISCONNECTED');
@@ -194,13 +185,19 @@ export const gateway = {
   },
 
   sendMessage(text) {
+    if (!authenticated) return Promise.reject(new Error('Not authenticated'));
     const { settings } = store.get();
     const sessionKey = getSessionKey(settings.agentId);
-    return request('chat.send', {
+    const payload = {
+      type: 'message',
       sessionKey,
-      message: { text },
-      idempotencyKey: crypto.randomUUID(),
-    });
+      text,
+      id: crypto.randomUUID(),
+    };
+    if (send(payload)) {
+      return Promise.resolve(payload);
+    }
+    return Promise.reject(new Error('Not connected'));
   },
 
   on(event, handler) {
@@ -218,37 +215,55 @@ export const gateway = {
   async testConnection(url, token) {
     return new Promise((resolve) => {
       let testWs;
+      let sent = false;
       const timer = setTimeout(() => {
         testWs?.close();
         resolve({ ok: false, error: 'Connection timeout (5s)' });
       }, 5000);
 
       try {
-        testWs = new WebSocket(url);
+        testWs = new WebSocket(buildAuthUrl(url, token));
       } catch (err) {
         clearTimeout(timer);
         resolve({ ok: false, error: err.message });
         return;
       }
 
-      testWs.onopen = () => {
-        const frame = buildConnect(token);
-        const connectId = frame.id;
-
-        testWs.onmessage = (event) => {
-          const res = parseFrame(event.data);
-          if (isResponse(res, connectId)) {
-            clearTimeout(timer);
-            testWs.close();
-            if (res.result && !res.error) {
-              resolve({ ok: true });
-            } else {
-              resolve({ ok: false, error: res.error?.message || 'Auth rejected' });
-            }
-          }
-        };
-
+      function doSendConnect() {
+        if (sent) return;
+        sent = true;
+        const frame = buildConnectRequest(token);
         testWs.send(JSON.stringify(frame));
+        return frame.id;
+      }
+
+      let testConnectId;
+      let sendTimer;
+
+      testWs.onopen = () => {
+        sendTimer = setTimeout(() => {
+          testConnectId = doSendConnect();
+        }, CONNECT_SEND_DELAY);
+      };
+
+      testWs.onmessage = (event) => {
+        const frame = parseFrame(event.data);
+
+        if (frame.event === 'connect.challenge') {
+          if (sendTimer) clearTimeout(sendTimer);
+          testConnectId = doSendConnect();
+          return;
+        }
+
+        if (frame.type === 'res' && frame.id === testConnectId) {
+          clearTimeout(timer);
+          testWs.close();
+          if (frame.ok !== false && !frame.error) {
+            resolve({ ok: true });
+          } else {
+            resolve({ ok: false, error: frame.error?.message || 'Auth rejected' });
+          }
+        }
       };
 
       testWs.onerror = () => {
@@ -259,7 +274,7 @@ export const gateway = {
   },
 
   get isConnected() {
-    return store.get().connection.state === 'CONNECTED';
+    return authenticated && store.get().connection.state === 'CONNECTED';
   },
 };
 
@@ -270,14 +285,14 @@ function flushQueue(settings) {
   const sessionKey = getSessionKey(settings.agentId);
 
   for (const item of pendingQueue) {
-    request('chat.send', {
+    const payload = {
+      type: 'message',
       sessionKey,
-      message: { text: item.text },
-      idempotencyKey: item.idempotencyKey,
-    })
-      .then(() => store.dequeue(item.idempotencyKey))
-      .catch(() => {
-        // Will retry on next reconnect
-      });
+      text: item.text,
+      id: item.idempotencyKey,
+    };
+    if (send(payload)) {
+      store.dequeue(item.idempotencyKey);
+    }
   }
 }

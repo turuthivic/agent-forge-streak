@@ -150,12 +150,28 @@ function completeTask(taskId, text) {
   }
 }
 
+let lastConnectionState = null;
+let hasFetchedTasks = false;
+
 function setupConnectionListener() {
   unsubConnection?.();
+  lastConnectionState = store.get().connection.state;
+  hasFetchedTasks = false;
+
   unsubConnection = store.subscribe((state) => {
+    const prev = lastConnectionState;
+    lastConnectionState = state.connection.state;
+
     updateStatusDot();
 
-    if (state.connection.state === 'CONNECTED') {
+    // Re-render when connection state changes
+    if (prev !== state.connection.state) {
+      renderFromState();
+    }
+
+    // Fetch tasks once on first connect
+    if (state.connection.state === 'CONNECTED' && !hasFetchedTasks) {
+      hasFetchedTasks = true;
       fetchTasks();
     }
   });
@@ -164,27 +180,42 @@ function setupConnectionListener() {
 function setupEventListener() {
   unsubEvents?.();
 
-  // Listen for chat events (streamed responses)
+  // Listen for all incoming messages and try to extract task data
   unsubEvents = gateway.on('*', (frame) => {
-    if (frame.event === 'chat.delta') {
-      accumulator.append(frame.data?.delta || '');
-    } else if (frame.event === 'chat.done' || frame.event === 'chat.complete') {
+    // Log for debugging during integration
+    console.log('[gateway frame]', frame);
+
+    // Extract text from whatever format the gateway sends
+    const text = frame.text || frame.message?.text || frame.data?.text
+      || frame.content || frame.data?.delta || frame.delta;
+
+    if (text) {
+      accumulator.append(text);
+
+      // Try to parse after each chunk - if it parses, apply it
+      const parsed = accumulator.parse();
+      if (parsed && parsed.items.length > 0) {
+        applyParsedTasks(parsed);
+        accumulator.reset();
+        return;
+      }
+    }
+
+    // If frame signals end of message, show whatever we have
+    const isDone = frame.type === 'done' || frame.type === 'complete'
+      || frame.done === true || frame.status === 'complete';
+
+    if (isDone && accumulator.text) {
       const parsed = accumulator.parse();
       if (parsed) {
         applyParsedTasks(parsed);
       } else {
-        // Couldn't parse - store raw message
         const { tasks } = store.get();
         store.update('tasks', { ...tasks, rawMessage: accumulator.text });
         renderFromState();
       }
       accumulator.reset();
     }
-  });
-
-  // Also listen for connected event to fetch tasks
-  gateway.on('connected', () => {
-    fetchTasks();
   });
 }
 
