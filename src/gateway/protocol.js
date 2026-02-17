@@ -10,11 +10,13 @@ export function buildConnectRequest(authToken) {
     method: 'connect',
     params: {
       auth: { token: authToken },
+      role: 'operator',
+      scopes: ['operator.read', 'operator.write'],
       minProtocol: 1,
       maxProtocol: 3,
       client: {
-        id: 'webchat',
-        mode: 'webchat',
+        id: 'openclaw-control-ui',
+        mode: 'ui',
         version: 'dev',
         platform: navigator.platform || 'web',
       },
@@ -31,5 +33,5 @@ export function parseFrame(data) {
 }
 
 export function getSessionKey(agentId) {
-  return `${agentId}:webchat:dm:forge-pwa`;
+  return `agent:${agentId}:main`;
 }

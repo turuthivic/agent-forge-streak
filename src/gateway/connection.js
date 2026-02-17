@@ -28,10 +28,20 @@ function getReconnectDelay() {
 }
 
 function startHeartbeat() {
+  // Gateway sends tick events as server heartbeat.
+  // We just need to detect if ticks stop arriving (stale connection).
   stopHeartbeat();
+  let lastTick = Date.now();
+
+  // Track incoming ticks
+  gateway.on('tick', () => { lastTick = Date.now(); });
+
   heartbeatTimer = setInterval(() => {
-    if (ws && ws.readyState === WebSocket.OPEN) {
-      ws.send(JSON.stringify({ type: 'ping' }));
+    if (Date.now() - lastTick > HEARTBEAT_INTERVAL * 3) {
+      console.log('[gateway] heartbeat timeout, reconnecting...');
+      const { settings } = store.get();
+      cleanup();
+      scheduleReconnect(settings);
     }
   }, HEARTBEAT_INTERVAL);
 }
@@ -189,11 +199,16 @@ export const gateway = {
     const { settings } = store.get();
     const sessionKey = getSessionKey(settings.agentId);
     const payload = {
-      type: 'message',
-      sessionKey,
-      text,
+      type: 'req',
       id: crypto.randomUUID(),
+      method: 'chat.send',
+      params: {
+        sessionKey,
+        message: text,
+        idempotencyKey: crypto.randomUUID(),
+      },
     };
+    console.log('[gateway] sending chat.send', payload);
     if (send(payload)) {
       return Promise.resolve(payload);
     }
@@ -286,10 +301,14 @@ function flushQueue(settings) {
 
   for (const item of pendingQueue) {
     const payload = {
-      type: 'message',
-      sessionKey,
-      text: item.text,
-      id: item.idempotencyKey,
+      type: 'req',
+      id: crypto.randomUUID(),
+      method: 'chat.send',
+      params: {
+        sessionKey,
+        message: item.text,
+        idempotencyKey: item.idempotencyKey,
+      },
     };
     if (send(payload)) {
       store.dequeue(item.idempotencyKey);

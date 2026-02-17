@@ -14,7 +14,7 @@ const defaultState = {
   settings: {
     gatewayUrl: '',
     authToken: '',
-    agentId: 'agent:main',
+    agentId: 'personal',
   },
   tasks: {
     day: null,

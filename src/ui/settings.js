@@ -34,7 +34,7 @@ export function renderSettings(container) {
           <input
             type="text"
             id="agentId"
-            placeholder="agent:main"
+            placeholder="personal"
             value="${escapeAttr(settings.agentId)}"
           />
         </div>
@@ -61,7 +61,7 @@ export function renderSettings(container) {
 function saveSettings() {
   const gatewayUrl = document.getElementById('gatewayUrl').value.trim();
   const authToken = document.getElementById('authToken').value.trim();
-  const agentId = document.getElementById('agentId').value.trim() || 'agent:main';
+  const agentId = document.getElementById('agentId').value.trim() || 'personal';
 
   store.update('settings', { gatewayUrl, authToken, agentId });
   showToast('Settings saved', 'success');

@@ -181,6 +181,13 @@ function setupEventListener() {
   unsubEvents?.();
 
   // Listen for all incoming messages and try to extract task data
+  // Fetch tasks when connected event fires directly
+  gateway.on('connected', () => {
+    console.log('[tasks] connected event received, fetching tasks...');
+    hasFetchedTasks = true;
+    fetchTasks();
+  });
+
   unsubEvents = gateway.on('*', (frame) => {
     // Log for debugging during integration
     console.log('[gateway frame]', frame);
@@ -220,10 +227,14 @@ function setupEventListener() {
 }
 
 function fetchTasks() {
+  console.log('[tasks] fetchTasks called');
   accumulator.reset();
-  gateway.sendMessage("Show today's tasks").catch((err) => {
-    showToast(`Failed to fetch tasks: ${err.message}`, 'error');
-  });
+  gateway.sendMessage("Show today's tasks")
+    .then(() => console.log('[tasks] chat.send succeeded'))
+    .catch((err) => {
+      console.error('[tasks] chat.send failed', err);
+      showToast(`Failed to fetch tasks: ${err.message}`, 'error');
+    });
 }
 
 function applyParsedTasks(parsed) {
