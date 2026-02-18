@@ -1,5 +1,11 @@
 import { store } from '../store.js';
-import { buildAuthUrl, buildConnectRequest, parseFrame, getSessionKey } from './protocol.js';
+import {
+  buildAuthUrl, buildConnectRequest, parseFrame, getSessionKey,
+  CLIENT_ID, CLIENT_MODE, ROLE, SCOPES,
+} from './protocol.js';
+import {
+  getOrCreateDeviceIdentity, buildDeviceAuthPayload, signPayload,
+} from './device-identity.js';
 
 const HEARTBEAT_INTERVAL = 30_000;
 const RECONNECT_BASE = 1000;
@@ -15,6 +21,8 @@ let authenticated = false;
 let connectSent = false;
 let currentAuthToken = null;
 let connectId = null;
+let challengeNonce = null;
+let deviceIdentity = null;
 let eventHandlers = new Map();
 
 function setState(connectionState, error = null) {
@@ -28,14 +36,9 @@ function getReconnectDelay() {
 }
 
 function startHeartbeat() {
-  // Gateway sends tick events as server heartbeat.
-  // We just need to detect if ticks stop arriving (stale connection).
   stopHeartbeat();
   let lastTick = Date.now();
-
-  // Track incoming ticks
   gateway.on('tick', () => { lastTick = Date.now(); });
-
   heartbeatTimer = setInterval(() => {
     if (Date.now() - lastTick > HEARTBEAT_INTERVAL * 3) {
       console.log('[gateway] heartbeat timeout, reconnecting...');
@@ -61,14 +64,39 @@ function send(obj) {
   return false;
 }
 
-function sendConnect() {
+async function sendConnect() {
   if (connectSent) return;
   connectSent = true;
   if (connectTimer) {
     clearTimeout(connectTimer);
     connectTimer = null;
   }
-  const frame = buildConnectRequest(currentAuthToken);
+
+  // Build signed device block
+  let device = null;
+  if (deviceIdentity) {
+    const signedAtMs = Date.now();
+    const payload = buildDeviceAuthPayload({
+      deviceId: deviceIdentity.id,
+      clientId: CLIENT_ID,
+      clientMode: CLIENT_MODE,
+      role: ROLE,
+      scopes: SCOPES,
+      signedAtMs,
+      token: currentAuthToken || null,
+      nonce: challengeNonce || undefined,
+    });
+    const signature = await signPayload(deviceIdentity.keyPair.privateKey, payload);
+    device = {
+      id: deviceIdentity.id,
+      publicKey: deviceIdentity.publicKeyRaw,
+      signature,
+      signedAt: signedAtMs,
+      nonce: challengeNonce || undefined,
+    };
+  }
+
+  const frame = buildConnectRequest(currentAuthToken, device, challengeNonce);
   connectId = frame.id;
   send(frame);
   console.log('[gateway] sent connect request', frame);
@@ -85,13 +113,14 @@ function handleMessage(raw, settings) {
   const frame = parseFrame(raw);
   console.log('[gateway frame]', frame);
 
-  // Challenge received - send connect immediately (no device auth, skip signing)
+  // Challenge received — extract nonce and send signed connect
   if (frame.type === 'event' && frame.event === 'connect.challenge') {
+    challengeNonce = frame.payload?.nonce || null;
     sendConnect();
     return;
   }
 
-  // Hello-ok response to our connect request
+  // Response to our connect request
   if (frame.type === 'res' && frame.id === connectId) {
     if (frame.ok !== false && !frame.error) {
       authenticated = true;
@@ -102,9 +131,19 @@ function handleMessage(raw, settings) {
       emit('connected', frame);
       console.log('[gateway] connected (hello-ok)', frame);
     } else {
-      const err = frame.error?.message || 'Connect rejected';
-      console.error('[gateway] connect failed:', err);
-      setState('DISCONNECTED', err);
+      const errCode = frame.error?.code || '';
+      const errMsg = frame.error?.message || 'Connect rejected';
+
+      // Device not paired yet — show pairing UI
+      if (errCode === 'NOT_PAIRED' || errMsg.includes('NOT_PAIRED')) {
+        console.log('[gateway] device not paired, awaiting approval');
+        setState('PAIRING', deviceIdentity?.id || null);
+        // Keep connection open — gateway may close us, then we reconnect
+        return;
+      }
+
+      console.error('[gateway] connect failed:', errMsg);
+      setState('DISCONNECTED', errMsg);
       cleanup();
     }
     return;
@@ -123,6 +162,7 @@ function cleanup() {
   connectSent = false;
   currentAuthToken = null;
   connectId = null;
+  challengeNonce = null;
   if (reconnectTimer) {
     clearTimeout(reconnectTimer);
     reconnectTimer = null;
@@ -153,12 +193,22 @@ function scheduleReconnect(settings) {
 }
 
 export const gateway = {
-  connect(settings) {
+  async connect(settings) {
     cleanup();
     setState('CONNECTING');
 
     const { gatewayUrl, authToken } = settings;
     currentAuthToken = authToken;
+
+    // Load or create device identity
+    try {
+      deviceIdentity = await getOrCreateDeviceIdentity();
+      console.log('[gateway] device identity:', deviceIdentity.id);
+    } catch (err) {
+      console.warn('[gateway] failed to load device identity, connecting without it:', err);
+      deviceIdentity = null;
+    }
+
     const url = buildAuthUrl(gatewayUrl, authToken);
 
     try {
@@ -170,7 +220,6 @@ export const gateway = {
 
     ws.onopen = () => {
       console.log('[gateway] WebSocket open, waiting for challenge...');
-      // Send connect after delay if no challenge arrives (mirrors Studio behavior)
       connectTimer = setTimeout(() => sendConnect(), CONNECT_SEND_DELAY);
     };
 
@@ -181,7 +230,7 @@ export const gateway = {
     ws.onclose = () => {
       const prevState = store.get().connection.state;
       cleanup();
-      if (prevState === 'CONNECTED' || prevState === 'CONNECTING') {
+      if (prevState === 'CONNECTED' || prevState === 'CONNECTING' || prevState === 'PAIRING') {
         scheduleReconnect(settings);
       } else {
         setState('DISCONNECTED');
@@ -228,9 +277,15 @@ export const gateway = {
   },
 
   async testConnection(url, token) {
+    let identity = null;
+    try {
+      identity = await getOrCreateDeviceIdentity();
+    } catch { /* continue without device identity */ }
+
     return new Promise((resolve) => {
       let testWs;
       let sent = false;
+      let testNonce = null;
       const timer = setTimeout(() => {
         testWs?.close();
         resolve({ ok: false, error: 'Connection timeout (5s)' });
@@ -244,10 +299,34 @@ export const gateway = {
         return;
       }
 
-      function doSendConnect() {
+      async function doSendConnect() {
         if (sent) return;
         sent = true;
-        const frame = buildConnectRequest(token);
+
+        let device = null;
+        if (identity) {
+          const signedAtMs = Date.now();
+          const payload = buildDeviceAuthPayload({
+            deviceId: identity.id,
+            clientId: CLIENT_ID,
+            clientMode: CLIENT_MODE,
+            role: ROLE,
+            scopes: SCOPES,
+            signedAtMs,
+            token: token || null,
+            nonce: testNonce || undefined,
+          });
+          const signature = await signPayload(identity.keyPair.privateKey, payload);
+          device = {
+            id: identity.id,
+            publicKey: identity.publicKeyRaw,
+            signature,
+            signedAt: signedAtMs,
+            nonce: testNonce || undefined,
+          };
+        }
+
+        const frame = buildConnectRequest(token, device, testNonce);
         testWs.send(JSON.stringify(frame));
         return frame.id;
       }
@@ -256,17 +335,18 @@ export const gateway = {
       let sendTimer;
 
       testWs.onopen = () => {
-        sendTimer = setTimeout(() => {
-          testConnectId = doSendConnect();
+        sendTimer = setTimeout(async () => {
+          testConnectId = await doSendConnect();
         }, CONNECT_SEND_DELAY);
       };
 
-      testWs.onmessage = (event) => {
+      testWs.onmessage = async (event) => {
         const frame = parseFrame(event.data);
 
         if (frame.event === 'connect.challenge') {
           if (sendTimer) clearTimeout(sendTimer);
-          testConnectId = doSendConnect();
+          testNonce = frame.payload?.nonce || null;
+          testConnectId = await doSendConnect();
           return;
         }
 
@@ -276,7 +356,13 @@ export const gateway = {
           if (frame.ok !== false && !frame.error) {
             resolve({ ok: true });
           } else {
-            resolve({ ok: false, error: frame.error?.message || 'Auth rejected' });
+            const errCode = frame.error?.code || '';
+            const errMsg = frame.error?.message || 'Auth rejected';
+            if (errCode === 'NOT_PAIRED' || errMsg.includes('NOT_PAIRED')) {
+              resolve({ ok: false, error: `Device not paired. Run on VM:\nopenclaw devices approve`, deviceId: identity?.id });
+            } else {
+              resolve({ ok: false, error: errMsg });
+            }
           }
         }
       };
@@ -290,6 +376,10 @@ export const gateway = {
 
   get isConnected() {
     return authenticated && store.get().connection.state === 'CONNECTED';
+  },
+
+  get deviceId() {
+    return deviceIdentity?.id || null;
   },
 };
 

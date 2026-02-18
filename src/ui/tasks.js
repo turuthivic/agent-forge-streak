@@ -52,6 +52,19 @@ function renderFromState() {
           <p style="margin-top:12px">Fetching today's tasks...</p>
         </div>
       `;
+    } else if (connection.state === 'PAIRING') {
+      const deviceId = connection.error || 'unknown';
+      const shortId = deviceId.slice(0, 12);
+      tasksContainer.innerHTML = `
+        <div class="empty-state">
+          <p>Device not paired yet.</p>
+          <p style="margin-top:8px;font-size:0.85em;opacity:0.8">Run on your VM:</p>
+          <code style="display:block;margin:8px 0;padding:8px 12px;background:rgba(0,0,0,0.3);border-radius:6px;font-size:0.85em;word-break:break-all">openclaw devices approve</code>
+          <p style="font-size:0.75em;opacity:0.6;margin-top:8px">Device: ${escapeHtml(shortId)}...</p>
+          <div class="loading-spinner" style="margin-top:16px"></div>
+          <p style="font-size:0.85em;opacity:0.7;margin-top:8px">Waiting for approval...</p>
+        </div>
+      `;
     } else if (connection.state === 'CONNECTING' || connection.state === 'RECONNECTING') {
       tasksContainer.innerHTML = `
         <div class="loading">
@@ -269,6 +282,10 @@ function updateStatusDot() {
     case 'RECONNECTING':
       dot.classList.add('reconnecting');
       dot.title = `Reconnecting... ${connection.error || ''}`;
+      break;
+    case 'PAIRING':
+      dot.classList.add('connecting');
+      dot.title = 'Waiting for device approval...';
       break;
     default:
       dot.title = connection.error || 'Disconnected';
